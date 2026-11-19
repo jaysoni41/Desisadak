@@ -1,0 +1,127 @@
+name: Build APK
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: gradle/actions/setup-gradle@v3
+        with: { gradle-version: 8.7 }
+      - run: pip install pillow
+      - name: Logo banao
+        run: |
+          A=proj/app/src/main
+          python3 - <<'E'
+          from PIL import Image, ImageDraw, ImageFont
+          import os, random, glob
+          A = 'proj/app/src/main'
+          S = 1024
+          im = Image.new('RGB', (S, S))
+          d = ImageDraw.Draw(im)
+          for y in range(S):
+              t = y / S
+              d.line([(0, y), (S, y)], fill=(int(255*(1-t)+40*t), int(140*(1-t)+20*t), int(40*(1-t)+90*t)))
+          d.ellipse([560, 180, 870, 490], fill=(255, 225, 120))
+          random.seed(7)
+          x = 0
+          while x < S:
+              w = random.randint(70, 130); h = random.randint(220, 520); top = int(S*.78 - h*.6)
+              d.rectangle([x, top, x+w, S], fill=(18, 14, 40))
+              for wy in range(top+20, int(S*.78), 38):
+                  for wx in range(x+12, x+w-18, 30):
+                      if random.random() < .55: d.rectangle([wx, wy, wx+14, wy+20], fill=(255, 210, 90))
+              x += w + 6
+          d.rectangle([0, 820, S, S], fill=(30, 30, 40))
+          for i in range(0, S, 110): d.rectangle([i, 920, i+60, 930], fill=(240, 200, 60))
+          d.rounded_rectangle([300, 720, 720, 810], 25, fill=(210, 30, 40))
+          d.polygon([(390, 720), (450, 650), (600, 650), (660, 720)], fill=(190, 25, 35))
+          d.polygon([(420, 715), (460, 665), (520, 665), (520, 715)], fill=(150, 200, 240))
+          d.polygon([(535, 715), (535, 665), (595, 665), (640, 715)], fill=(150, 200, 240))
+          for cx in (390, 640):
+              d.ellipse([cx-42, 775, cx+42, 859], fill=(15, 15, 15)); d.ellipse([cx-18, 799, cx+18, 835], fill=(180, 180, 190))
+          fp = ([p for p in glob.glob('/usr/share/fonts/**/DejaVuSans-Bold.ttf', recursive=True)] or [None])[0]
+          F = ImageFont.truetype(fp, 150) if fp else ImageFont.load_default()
+          for t, y, c in (('DESI', 70, (255, 255, 255)), ('CITY', 215, (255, 215, 60))):
+              w = d.textlength(t, font=F)
+              d.text(((S-w)/2+6, y+6), t, font=F, fill=(0, 0, 0)); d.text(((S-w)/2, y), t, font=F, fill=c)
+          for n, s in (('mdpi', 48), ('hdpi', 72), ('xhdpi', 96), ('xxhdpi', 144), ('xxxhdpi', 192)):
+              p = A + '/res/mipmap-' + n
+              os.makedirs(p, exist_ok=True)
+              r = im.resize((s, s), Image.LANCZOS)
+              r.save(p + '/ic_launcher.png'); r.save(p + '/ic_launcher_round.png')
+          E
+      - name: Create Android project
+        run: |
+          set -e
+          A=proj/app/src/main
+          mkdir -p $A/assets $A/java/com/jay/desicity
+          cp index.html $A/assets/index.html
+          curl -L https://cdnjs.cloudflare.com/ajax/libs/three.js/r149/three.min.js -o $A/assets/three.min.js
+          cat > proj/settings.gradle <<'E'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+          rootProject.name = "DesiCity"
+          include ':app'
+          E
+          cat > proj/build.gradle <<'E'
+          plugins { id 'com.android.application' version '8.5.2' apply false }
+          E
+          echo "android.useAndroidX=true" > proj/gradle.properties
+          cat > proj/app/build.gradle <<'E'
+          plugins { id 'com.android.application' }
+          android {
+              namespace 'com.jay.desicity'
+              compileSdk 34
+              defaultConfig { applicationId 'com.jay.desicity'; minSdk 21; targetSdk 34; versionCode 1; versionName '1.0' }
+              compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
+          }
+          E
+          cat > $A/AndroidManifest.xml <<'E'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application android:label="Desi City" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:hardwareAccelerated="true" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+                  <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="sensorLandscape" android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          E
+          cat > $A/java/com/jay/desicity/MainActivity.java <<'E'
+          package com.jay.desicity;
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.view.View;
+          import android.view.WindowManager;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          public class MainActivity extends Activity {
+              private WebView web;
+              @Override protected void onCreate(Bundle b) {
+                  super.onCreate(b);
+                  getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                  web = new WebView(this);
+                  WebSettings s = web.getSettings();
+                  s.setJavaScriptEnabled(true);
+                  s.setDomStorageEnabled(true);
+                  s.setMediaPlaybackRequiresUserGesture(false);
+                  web.setBackgroundColor(0xFF000000);
+                  setContentView(web);
+                  web.loadUrl("file:///android_asset/index.html");
+              }
+              @Override public void onWindowFocusChanged(boolean f) {
+                  super.onWindowFocusChanged(f);
+                  if (f) getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+              }
+              @Override protected void onPause() { super.onPause(); web.onPause(); }
+              @Override protected void onResume() { super.onResume(); web.onResume(); }
+          }
+          E
+      - run: gradle assembleDebug
+        working-directory: proj
+      - uses: actions/upload-artifact@v4
+        with: { name: DesiCity-APK, path: proj/app/build/outputs/apk/debug/app-debug.apk }
